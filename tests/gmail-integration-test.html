@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citato Gmail Integration Test</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px 10px 10px 0;
+        }
+        button:hover {
+            background: #5856eb;
+        }
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+        .success { color: #059669; }
+        .error { color: #dc2626; }
+        .warning { color: #d97706; }
+        pre {
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        .status.success { background: #dcfce7; }
+        .status.error { background: #fee2e2; }
+        .status.warning { background: #fef3c7; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Citato Gmail Integration Test</h1>
+    <p>This page tests the Gmail integration for the new mobile-first Citato app.</p>
+
+    <!-- Configuration Section -->
+    <div class="section">
+        <h2>⚙️ Configuration</h2>
+        <p><strong>Supabase URL:</strong> <span id="supabase-url">Not set</span></p>
+        <p><strong>Environment:</strong> <span id="environment">Unknown</span></p>
+        <div id="config-status" class="status warning">
+            <strong>⚠️ Please update the Supabase configuration in this HTML file</strong>
+        </div>
+    </div>
+
+    <!-- Authentication Section -->
+    <div class="section">
+        <h2>🔐 Authentication</h2>
+        <div id="auth-section">
+            <button onclick="signInWithGoogle()">Sign in with Google</button>
+            <p class="warning">Note: This will request Gmail permissions for newsletter processing</p>
+        </div>
+        
+        <div id="user-section" style="display:none;">
+            <div class="status success">
+                <strong>✅ Signed in as:</strong> <span id="user-email"></span>
+            </div>
+            <button onclick="testGmailIntegration()">Test Gmail Integration</button>
+            <button onclick="signOut()">Sign Out</button>
+        </div>
+    </div>
+
+    <!-- Test Results Section -->
+    <div class="section">
+        <h2>🧪 Test Results</h2>
+        <div id="results">
+            <p>Sign in and click "Test Gmail Integration" to see results</p>
+        </div>
+    </div>
+
+    <script>
+        // ⚠️ UPDATE THESE WITH YOUR ACTUAL SUPABASE CREDENTIALS
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+        // Initialize Supabase
+        let supabaseClient;
+        
+        // Check configuration on load
+        window.onload = function() {
+            document.getElementById('supabase-url').textContent = supabaseUrl;
+            
+            if (supabaseUrl === 'YOUR_SUPABASE_URL_HERE') {
+                document.getElementById('config-status').innerHTML = 
+                    '<strong>❌ Please update supabaseUrl and supabaseKey in this HTML file</strong>';
+                return;
+            }
+            
+            // Initialize Supabase client
+            supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+            document.getElementById('config-status').className = 'status success';
+            document.getElementById('config-status').innerHTML = 
+                '<strong>✅ Configuration loaded successfully</strong>';
+            document.getElementById('environment').textContent = 'Connected';
+            
+            // Check auth state
+            supabaseClient.auth.onAuthStateChange((event, session) => {
+                console.log('Auth state changed:', event, session?.user);
+                
+                if (session?.user) {
+                    document.getElementById('auth-section').style.display = 'none';
+                    document.getElementById('user-section').style.display = 'block';
+                    document.getElementById('user-email').textContent = session.user.email;
+                    
+                    // Store Gmail tokens if available
+                    if (session.provider_token && session.provider_refresh_token) {
+                        console.log('Storing Gmail tokens...');
+                        storeGmailTokens(session);
+                    }
+                } else {
+                    document.getElementById('auth-section').style.display = 'block';
+                    document.getElementById('user-section').style.display = 'none';
+                    document.getElementById('results').innerHTML = 
+                        '<p>Sign in and click "Test Gmail Integration" to see results</p>';
+                }
+            });
+        }
+
+        async function signInWithGoogle() {
+            if (!supabaseClient) {
+                alert('Please update the Supabase configuration first');
+                return;
+            }
+            
+            try {
+                const { data, error } = await supabaseClient.auth.signInWithOAuth({
+                    provider: 'google',
+                    options: {
+                        scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify',
+                        queryParams: {
+                            access_type: 'offline',
+                            prompt: 'consent',
+                        }
+                    }
+                });
+                
+                if (error) {
+                    throw error;
+                }
+            } catch (error) {
+                console.error('Sign in error:', error);
+                document.getElementById('results').innerHTML = 
+                    `<div class="status error"><strong>❌ Sign in error:</strong> ${error.message}</div>`;
+            }
+        }
+
+        async function storeGmailTokens(session) {
+            try {
+                const { data, error } = await supabaseClient
+                    .from('auth_tokens')
+                    .upsert({
+                        user_id: session.user.id,
+                        access_token: session.provider_token,
+                        refresh_token: session.provider_refresh_token
+                    });
+                
+                if (error) {
+                    console.error('Error storing tokens:', error);
+                } else {
+                    console.log('✅ Gmail tokens stored successfully');
+                }
+            } catch (error) {
+                console.error('Error storing Gmail tokens:', error);
+            }
+        }
+
+        async function testGmailIntegration() {
+            document.getElementById('results').innerHTML = 
+                '<div class="status warning"><strong>🔄 Testing Gmail integration...</strong></div>';
+            
+            try {
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                
+                const response = await fetch(`${supabaseUrl}/functions/v1/test-gmail-integration`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${session.access_token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    document.getElementById('results').innerHTML = `
+                        <div class="status success">
+                            <strong>✅ Gmail Integration Test Passed!</strong>
+                        </div>
+                        <h3>📊 Test Statistics</h3>
+                        <ul>
+                            <li><strong>Total emails found:</strong> ${result.stats.totalEmails}</li>
+                            <li><strong>Emails processed:</strong> ${result.stats.processedEmails}</li>
+                            <li><strong>Newsletters detected:</strong> ${result.stats.detectedNewsletters}</li>
+                            <li><strong>Newsletter patterns loaded:</strong> ${result.stats.curatedPatternsCount}</li>
+                        </ul>
+                        <h3>🎯 System Status</h3>
+                        <ul>
+                            <li><strong>Gmail API Access:</strong> ${result.testResults.gmailApiAccess}</li>
+                            <li><strong>Token Refresh:</strong> ${result.testResults.tokenRefresh}</li>
+                            <li><strong>Email Retrieval:</strong> ${result.testResults.emailRetrieval}</li>
+                            <li><strong>Newsletter Detection:</strong> ${result.testResults.newsletterDetection}</li>
+                        </ul>
+                        ${result.detectedNewsletters.length > 0 ? `
+                            <h3>📮 Detected Newsletters</h3>
+                            <pre>${JSON.stringify(result.detectedNewsletters, null, 2)}</pre>
+                        ` : ''}
+                        <details>
+                            <summary><strong>📋 Full Test Results</strong></summary>
+                            <pre>${JSON.stringify(result, null, 2)}</pre>
+                        </details>
+                    `;
+                } else {
+                    document.getElementById('results').innerHTML = `
+                        <div class="status error">
+                            <strong>❌ Gmail Integration Test Failed</strong>
+                        </div>
+                        <p><strong>Error:</strong> ${result.error}</p>
+                        ${result.needsReauth ? `
+                            <div class="status warning">
+                                <strong>⚠️ Action Required:</strong> Please sign out and sign in again to re-authorize Gmail access.
+                            </div>
+                        ` : ''}
+                        <details>
+                            <summary><strong>📋 Full Error Details</strong></summary>
+                            <pre>${JSON.stringify(result, null, 2)}</pre>
+                        </details>
+                    `;
+                }
+            } catch (error) {
+                console.error('Test error:', error);
+                document.getElementById('results').innerHTML = `
+                    <div class="status error">
+                        <strong>❌ Test Error</strong><br>
+                        ${error.message}
+                    </div>
+                    <p>Check the browser console for more details.</p>
+                `;
+            }
+        }
+
+        async function signOut() {
+            await supabaseClient.auth.signOut();
+            document.getElementById('results').innerHTML = 
+                '<p>Sign in and click "Test Gmail Integration" to see results</p>';
+        }
+    </script>
+</body>
+</html>
